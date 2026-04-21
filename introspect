@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""introspect — run anything under a pty, log every byte, query it later."""
+import os, sys, pty, select, termios, tty, fcntl, struct, signal, json, re, time, hashlib, shutil
+from pathlib import Path
+
+ROOT = Path.home() / '.introspect'
+ANSI_RE = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]')
+
+# ---------- run ----------
+
+def gen_id(cmd):
+    base = Path(cmd[0]).name.replace('/', '_') or 'cmd'
+    h = hashlib.sha1((' '.join(cmd) + str(time.time_ns())).encode()).hexdigest()[:4]
+    return f"{base}-{h}"
+
+def _write_meta(path, **kv):
+    try: cur = json.loads(path.read_text())
+    except Exception: cur = {}
+    cur.update(kv)
+    path.write_text(json.dumps(cur))
+
+def cmd_run(cmd, id=None):
+    if not cmd:
+        print("introspect: nothing to run", file=sys.stderr); sys.exit(2)
+    id = id or gen_id(cmd)
+    d = ROOT / id
+    d.mkdir(parents=True, exist_ok=True)
+    log = d / 'log'
+    meta = d / 'meta.json'
+    _write_meta(meta, id=id, cmd=cmd, cwd=os.getcwd(), started=time.time(), pid=None, exited=None, exit_status=None)
+
+    # announce id (dim) on the controlling terminal only — don't pollute the log
+    if sys.stdout.isatty():
+        sys.stdout.write(f"\x1b[2m[introspect id={id}]\x1b[0m\n")
+        sys.stdout.flush()
+
+    logf = open(log, 'ab', buffering=0)
+
+    pid, fd = pty.fork()
+    if pid == 0:
+        try: os.execvp(cmd[0], cmd)
+        except FileNotFoundError:
+            sys.stderr.write(f"introspect: {cmd[0]}: not found\n"); os._exit(127)
+
+    _write_meta(meta, pid=pid)
+
+    def set_size(*_):
+        try:
+            s = fcntl.ioctl(sys.stdin.fileno(), termios.TIOCGWINSZ, b'\0'*8)
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, s)
+        except Exception: pass
+    set_size()
+    signal.signal(signal.SIGWINCH, set_size)
+
+    stdin_is_tty = sys.stdin.isatty()
+    old_attrs = None
+    if stdin_is_tty:
+        old_attrs = termios.tcgetattr(sys.stdin)
+        tty.setraw(sys.stdin)
+
+    try:
+        while True:
+            try:
+                r, _, _ = select.select([fd, sys.stdin], [], [])
+            except (InterruptedError, OSError):
+                continue
+            if fd in r:
+                try: data = os.read(fd, 8192)
+                except OSError: data = b''
+                if not data: break
+                os.write(sys.stdout.fileno(), data)
+                logf.write(data)
+            if sys.stdin in r:
+                try: data = os.read(sys.stdin.fileno(), 8192)
+                except OSError: data = b''
+                if not data: continue
+                os.write(fd, data)
+    finally:
+        if stdin_is_tty and old_attrs is not None:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_attrs)
+        try: os.close(fd)
+        except Exception: pass
+        try: _, status = os.waitpid(pid, 0)
+        except ChildProcessError: status = 0
+        logf.close()
+        _write_meta(meta, exited=time.time(), exit_status=status)
+
+    code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + (os.WTERMSIG(status) if os.WIFSIGNALED(status) else 0)
+    sys.exit(code)
+
+# ---------- query ----------
+
+def _require(id):
+    d = ROOT / id
+    if not d.exists():
+        print(f"introspect: no such id: {id}", file=sys.stderr); sys.exit(1)
+    return d
+
+def _read_lines(id, strip_ansi=True):
+    d = _require(id)
+    data = (d / 'log').read_bytes()
+    data = data.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+    if strip_ansi:
+        data = ANSI_RE.sub(b'', data)
+    lines = data.split(b'\n')
+    if lines and lines[-1] == b'':
+        lines.pop()
+    return lines
+
+def _parse_range(args):
+    """Accept `100 500`, `100_500`, `100..500`, or just `100`."""
+    start = end = None
+    if len(args) == 1:
+        tok = args[0]
+        if '_' in tok:      a, b = tok.split('_', 1)
+        elif '..' in tok:   a, b = tok.split('..', 1)
+        else:               a, b = tok, tok
+        start, end = int(a), int(b)
+    elif len(args) >= 2:
+        start, end = int(args[0]), int(args[1])
+    return start, end
+
+def cmd_get_lines(args):
+    id, raw, rest = _pop_flags(args, want_id=True)
+    start, end = _parse_range(rest)
+    lines = _read_lines(id, strip_ansi=not raw)
+    start = start or 1
+    end = end or len(lines)
+    width = len(str(end))
+    for i in range(start, min(end, len(lines)) + 1):
+        sys.stdout.buffer.write(f"{i:>{width}}: ".encode() + lines[i-1] + b'\n')
+    sys.stdout.flush()
+
+def cmd_tail(args):
+    id, raw, rest = _pop_flags(args, want_id=True)
+    follow = '-f' in rest or '--follow' in rest
+    rest = [a for a in rest if a not in ('-f', '--follow')]
+    n = int(rest[0]) if rest else 20
+    lines = _read_lines(id, strip_ansi=not raw)
+    for l in lines[-n:]:
+        sys.stdout.buffer.write(l + b'\n')
+    sys.stdout.flush()
+    if follow:
+        log = ROOT / id / 'log'
+        with open(log, 'rb') as f:
+            f.seek(0, 2)
+            buf = b''
+            while True:
+                chunk = f.read(8192)
+                if chunk:
+                    buf += chunk
+                    out = buf.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+                    if not raw: out = ANSI_RE.sub(b'', out)
+                    sys.stdout.buffer.write(out); sys.stdout.flush()
+                    buf = b''
+                else:
+                    time.sleep(0.1)
+
+def cmd_ls(args):
+    if not ROOT.exists(): return
+    rows = []
+    for d in sorted(ROOT.iterdir()):
+        mf = d / 'meta.json'
+        if not mf.exists(): continue
+        try: m = json.loads(mf.read_text())
+        except Exception: continue
+        alive = False
+        if m.get('pid') and not m.get('exited'):
+            try: os.kill(m['pid'], 0); alive = True
+            except OSError: pass
+        status = 'running' if alive else 'exited'
+        lines = 0
+        try: lines = sum(1 for _ in open(d / 'log', 'rb'))
+        except Exception: pass
+        cmd = ' '.join(m.get('cmd') or [])
+        rows.append((m.get('id',''), status, str(lines), cmd))
+    if not rows:
+        return
+    w = [max(len(r[i]) for r in rows) for i in range(3)]
+    for r in rows:
+        print(f"{r[0]:<{w[0]}}  {r[1]:<{w[1]}}  {r[2]:>{w[2]}}L  {r[3]}")
+
+def cmd_rm(args):
+    id, _, _ = _pop_flags(args, want_id=True)
+    d = _require(id)
+    shutil.rmtree(d)
+
+def cmd_clear(args):
+    id, _, _ = _pop_flags(args, want_id=True)
+    _require(id)
+    (ROOT / id / 'log').write_bytes(b'')
+
+def cmd_path(args):
+    id, _, _ = _pop_flags(args, want_id=True)
+    print(_require(id))
+
+# ---------- arg plumbing ----------
+
+def _pop_flags(args, want_id=False):
+    """Strip --id X, --raw, positional id (first non-flag) if want_id."""
+    args = list(args)
+    id = None; raw = False; rest = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--id' and i+1 < len(args):
+            id = args[i+1]; i += 2; continue
+        if a == '--raw':
+            raw = True; i += 1; continue
+        rest.append(a); i += 1
+    if want_id and id is None and rest:
+        id = rest.pop(0)
+    if want_id and id is None:
+        print("introspect: missing id", file=sys.stderr); sys.exit(2)
+    return id, raw, rest
+
+USAGE = """usage:
+  introspect <cmd...>                  run <cmd> under introspect (auto id)
+  introspect --id NAME -- <cmd...>     run with explicit id
+  introspect ls                        list known ids
+  introspect get_lines ID N M          print lines N..M (also: N_M or N..M)
+  introspect get_lines ID N_M          same, single-token range
+  introspect tail ID [N] [-f]          last N lines, optionally follow
+  introspect rm ID                     delete id's log + metadata
+  introspect clear ID                  truncate id's log
+  introspect path ID                   print storage path
+
+flags: --raw  keep ANSI escapes in query output
+"""
+
+SUBS = {'ls','get_lines','getlines','tail','rm','clear','path','run','help','--help','-h'}
+
+def main():
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ('-h','--help','help'):
+        sys.stdout.write(USAGE); return
+    head = argv[0]
+
+    # explicit `introspect run -- cmd...` or `introspect --id X -- cmd...`
+    if head == '--id':
+        if len(argv) < 3:
+            print(USAGE, file=sys.stderr); sys.exit(2)
+        id = argv[1]; rest = argv[2:]
+        if rest and rest[0] == '--': rest = rest[1:]
+        cmd_run(rest, id=id); return
+    if head == 'run':
+        rest = argv[1:]
+        id = None
+        if rest[:1] == ['--id']:
+            id = rest[1]; rest = rest[2:]
+        if rest[:1] == ['--']: rest = rest[1:]
+        cmd_run(rest, id=id); return
+
+    if head in ('ls',): cmd_ls(argv[1:]); return
+    if head in ('get_lines','getlines'): cmd_get_lines(argv[1:]); return
+    if head == 'tail': cmd_tail(argv[1:]); return
+    if head == 'rm': cmd_rm(argv[1:]); return
+    if head == 'clear': cmd_clear(argv[1:]); return
+    if head == 'path': cmd_path(argv[1:]); return
+
+    # bare command: introspect mix phx.server
+    cmd_run(argv, id=None)
+
+if __name__ == '__main__':
+    try: main()
+    except KeyboardInterrupt: sys.exit(130)
