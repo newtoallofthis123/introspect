@@ -1,4 +1,4 @@
-# introspect
+# 🧐 introspect
 
 **Run any command. Query its output later.**
 
