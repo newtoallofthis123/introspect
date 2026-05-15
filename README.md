@@ -8,7 +8,7 @@ Think of it as a flight recorder for your shell.
 
 ![python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![deps](https://img.shields.io/badge/deps-click-lightgrey)
-![status](https://img.shields.io/badge/status-works%20on%20my%20machine-green)
+![status](https://img.shields.io/badge/status-alpha-yellow)
 
 ---
 
@@ -35,12 +35,23 @@ introspect send api 'Logger.configure(level: :debug)'
 
 ## Install
 
+From GitHub:
+
 ```bash
-git clone https://github.com/<you>/introspect
+uv tool install git+https://github.com/newtoallofthis123/introspect
+```
+
+For local development:
+
+```bash
+git clone https://github.com/newtoallofthis123/introspect
+cd introspect
 uv tool install ./introspect
 ```
 
 Requires Python 3.11+. Install [`rg`](https://github.com/BurntSushi/ripgrep) if you want `search` (most people already have it).
+
+Platform support: macOS and Linux. Windows is not supported by the current pty / Unix-socket design.
 
 ---
 
@@ -79,6 +90,32 @@ $ introspect tail mix-a3f2 -f --filter error
 
 ---
 
+## For coding agents
+
+`introspect` gives agents a stable way to inspect long-running processes without taking over your terminal.
+
+Run your server under `introspect`:
+
+```bash
+introspect --id web -- npm run dev
+introspect --id api -- mix phx.server
+introspect --id worker -- python -m celery -A app worker
+```
+
+Then a coding agent can query the captured logs from another shell:
+
+```bash
+introspect tail web 80
+introspect search api 'ERROR|Exception|500' -C 5
+introspect since worker 10m
+```
+
+That means your Next.js server, Elixir/Phoenix server, watcher, REPL, build, or pretty much any long-running command can keep running normally while the agent checks recent output, searches for failures, compares before/after behavior, or reads around an error.
+
+This repo includes a Claude skill at `.claude/skills/introspect/` so compatible agents know how to discover runs, tail logs, search with context, and use markers/filters safely.
+
+---
+
 ## Features
 
 - **Zero-ceremony capture.** Just prefix any command with `introspect`. Auto-generates an id, shows it on the first line, runs normally.
@@ -89,6 +126,7 @@ $ introspect tail mix-a3f2 -f --filter error
 - **Named filters.** Define what "error" or "slow" means for *your* process, once. Reuse everywhere.
 - **Full-text search.** `introspect search` shells to `rg` — pass through `-C`, `-i`, anything.
 - **Input injection.** `introspect send` writes to a running process's stdin via a per-run unix socket. Drive your REPL from another pane.
+- **Agent-ready.** The included `.claude` skill teaches agents how to inspect captured runs without interrupting your server.
 - **One dep.** Just `click`. Everything else is stdlib.
 
 ---
@@ -179,6 +217,12 @@ src/introspect/
 ## Contributing
 
 Small tool, opinionated scope. Bug reports and pull requests welcome — open an issue first if you're proposing a sizeable feature so we can talk about fit.
+
+```bash
+uv sync
+uv run python -m unittest
+uv run introspect --help
+```
 
 Good starter ideas if you want to hack on it:
 

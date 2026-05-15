@@ -2,8 +2,32 @@
 name = "introspect"
 version = "0.1.0"
 description = "Run anything under a pty, log every byte, query it later."
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "newtoallofthis123" }]
+keywords = ["cli", "pty", "logs", "terminal", "debugging"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: System :: Logging",
+  "Topic :: Terminals",
+]
 dependencies = ["click>=8.1"]
+
+[project.urls]
+Repository = "https://github.com/newtoallofthis123/introspect"
+Issues = "https://github.com/newtoallofthis123/introspect/issues"
 
 [project.scripts]
 introspect = "introspect.cli:main"

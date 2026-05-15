@@ -345,7 +345,14 @@ def main() -> None:
     elif argv and argv[0] == '--id':
         # `introspect --id foo -- cmd...` → `run --id foo -- cmd...`
         sys.argv = [sys.argv[0], 'run'] + argv
-    cli()
+    try:
+        cli(standalone_mode=False)
+    except click.ClickException as e:
+        e.show()
+        sys.exit(e.exit_code)
+    except (FileNotFoundError, RuntimeError, ValueError) as e:
+        click.ClickException(str(e)).show()
+        sys.exit(1)
 
 
 if __name__ == '__main__':

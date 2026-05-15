@@ -5,5 +5,4 @@ __pycache__/
 dist/
 build/
 .uv-cache/
-uv.lock
 .DS_Store
