@@ -15,7 +15,7 @@ import tty
 from . import storage, timestamps
 
 
-def run(cmd: list[str], id_: str | None = None) -> int:
+def run(cmd: list[str], id_: str | None = None, banner: str | None = None) -> int:
     if not cmd:
         raise ValueError("nothing to run")
     id_ = id_ or storage.gen_id(cmd)
@@ -30,7 +30,7 @@ def run(cmd: list[str], id_: str | None = None) -> int:
     )
 
     if sys.stdout.isatty():
-        sys.stdout.write(f"\x1b[2m[introspect id={id_}]\x1b[0m\n")
+        sys.stdout.write(f"\x1b[2m{banner or f'[introspect id={id_}]'}\x1b[0m\n")
         sys.stdout.flush()
 
     logf = open(log_path, 'ab', buffering=0)
@@ -48,6 +48,7 @@ def run(cmd: list[str], id_: str | None = None) -> int:
 
     pid, fd = pty.fork()
     if pid == 0:
+        os.environ['INTROSPECT_ID'] = id_
         try:
             os.execvp(cmd[0], list(cmd))
         except FileNotFoundError:

@@ -13,7 +13,9 @@ Your job with this skill is to **read**, not to run. Use it to answer the user's
 
 ## Responsibility split
 
-**The user attaches commands.** They decide what to run under `introspect` and when. You should not launch long-lived processes yourself via `introspect` — that's the user's call (they're the one with the terminal). If no run exists for what you need to investigate, say so and ask them to start one.
+**The user attaches commands.** They decide what to run under `introspect` and when. You should not launch long-lived processes yourself via `introspect` — that's the user's call (they're the one with the terminal). If no run exists for what you need to investigate, say so and ask them to start one. Besides wrapping single commands, the user can record a whole interactive shell session with `introspect shell` — such runs show up in `ls` like any other (id `shell-*` by default) and capture prompts, typed commands, and output interleaved.
+
+Every wrapped process has `INTROSPECT_ID` in its environment, set to the run's id. If you are running inside one (check the env var), that's the id capturing your own session.
 
 **You investigate.** Freely use the read-only query commands:
 

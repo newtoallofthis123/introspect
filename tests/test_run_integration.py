@@ -36,6 +36,21 @@ class RunIntegrationTests(unittest.TestCase):
         self.assertEqual(meta["cmd"][0], sys.executable)
         self.assertIsNotNone(meta["exited"])
 
+    def test_child_sees_introspect_id_env(self) -> None:
+        old_stdout = os.dup(1)
+        with open(os.devnull, "wb") as devnull:
+            os.dup2(devnull.fileno(), 1)
+            try:
+                run.run(
+                    [sys.executable, "-c", "import os; print(os.environ['INTROSPECT_ID'])"],
+                    id_="envcheck",
+                )
+            finally:
+                os.dup2(old_stdout, 1)
+                os.close(old_stdout)
+
+        self.assertEqual(reader.read_lines("envcheck"), [b"envcheck"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 """Click CLI for introspect."""
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -17,7 +18,7 @@ from . import timestamps as T
 
 
 KNOWN = {
-    'run', 'ls', 'get-lines', 'tail', 'since', 'between',
+    'run', 'shell', 'ls', 'get-lines', 'tail', 'since', 'between',
     'mark', 'marks', 'unmark', 'search', 'filter', 'filters',
     'send', 'rm', 'clear', 'path', 'help', '--help', '-h',
 }
@@ -79,6 +80,22 @@ def run(id_, cmd):
     if not cmd:
         raise click.UsageError("nothing to run")
     sys.exit(RUN.run(cmd, id_=id_))
+
+
+# ---------- shell ----------
+
+@cli.command()
+@click.option('--id', 'id_', default=None, help="explicit id (otherwise auto-generated)")
+def shell(id_):
+    """Record an interactive shell session. Exit the shell (or Ctrl-D) to stop."""
+    inside = os.environ.get('INTROSPECT_ID')
+    if inside:
+        raise click.ClickException(
+            f"already recording under id {inside!r} — exit that session first")
+    sh = os.environ.get('SHELL') or '/bin/sh'
+    id_ = id_ or storage.gen_id(['shell'])
+    banner = f"[{id_}] interactive shell — everything is being recorded; exit to stop"
+    sys.exit(RUN.run([sh], id_=id_, banner=banner))
 
 
 # ---------- ls ----------

@@ -86,7 +86,17 @@ $ introspect send mix-a3f2 'Logger.configure(level: :debug)'
 # Define your own filters — "error", "slow", whatever matters to you:
 $ introspect filter set mix-a3f2 error '\b(ERROR|FATAL)\b'
 $ introspect tail mix-a3f2 -f --filter error
+
+# Or record a whole interactive shell session:
+$ introspect shell
+[shell-9c1d] interactive shell — everything is being recorded; exit to stop
+$ ls
+...
+$ exit
+# Every prompt, command, and output line is now queryable under shell-9c1d.
 ```
+
+Inside any wrapped command (including `shell`), `INTROSPECT_ID` is set to the run's id — handy for marking moments from within the session itself: `introspect mark $INTROSPECT_ID before-deploy`.
 
 ---
 
@@ -137,6 +147,7 @@ This repo includes a Claude skill at `.claude/skills/introspect/` so compatible 
 |---|---|
 | `introspect <cmd...>` | Run a command under introspect (bare form, auto id). |
 | `introspect --id NAME -- <cmd...>` | Run with an explicit id. |
+| `introspect shell [--id NAME]` | Record an interactive shell session; `exit` to stop. |
 | `introspect ls` | List all known runs. |
 | `introspect tail ID [N] [-f]` | Last N lines, optionally follow. |
 | `introspect get-lines ID N M` | Slice by line range (`100 500`, `100_500`, `100..500` all work). |
